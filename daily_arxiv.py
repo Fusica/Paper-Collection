@@ -76,10 +76,15 @@ def get_code_link(qword:str) -> str:
         "sort": "stars",
         "order": "desc"
     }
-    r = requests.get(github_url, params=params)
-    results = r.json()
+    try:
+        r = requests.get(github_url, params=params)
+        results = r.json()
+    except Exception as e:
+        logging.error(f"GitHub search failed for {qword}: {e}")
+        return None
+
     code_link = None
-    if results["total_count"] > 0:
+    if "total_count" in results and results["total_count"] > 0:
         code_link = results["items"][0]["html_url"]
     return code_link
   
@@ -121,38 +126,39 @@ def get_daily_papers(topic,query="slam", max_results=2):
         else:
             paper_key = paper_id[0:ver_pos]    
 
+        repo_url = None
         try:
             # source code link    
             r = requests.get(code_url).json()
-            repo_url = None
             if "official" in r and r["official"]:
                 repo_url = r["official"]["url"]
-            # TODO: not found, two more chances  
-            # else: 
-            #    repo_url = get_code_link(paper_title)
-            #    if repo_url is None:
-            #        repo_url = get_code_link(paper_key)
-            if repo_url is not None:
-                content[paper_key] = "|**{}**|**{}**|{} et.al.|[{}]({})|**[link]({})**|\n".format(
-                       update_time,paper_title,paper_first_author,paper_id,paper_url,repo_url)
-                content_to_web[paper_key] = "- {}, **{}**, {} et.al., Paper: [{}]({}), Code: **[{}]({})**".format(
-                       update_time,paper_title,paper_first_author,paper_url,paper_url,repo_url,repo_url)
-
-            else:
-                content[paper_key] = "|**{}**|**{}**|{} et.al.|[{}]({})|null|\n".format(
-                       update_time,paper_title,paper_first_author,paper_id,paper_url)
-                content_to_web[paper_key] = "- {}, **{}**, {} et.al., Paper: [{}]({})".format(
-                       update_time,paper_title,paper_first_author,paper_url,paper_url)
-
-            # TODO: select useful comments
-            comments = None
-            if comments != None:
-                content_to_web[paper_key] += f", {comments}\n"
-            else:
-                content_to_web[paper_key] += f"\n"
-
         except Exception as e:
             logging.error(f"exception: {e} with id: {paper_key}")
+
+        # not found, two more chances
+        if repo_url is None:
+            repo_url = get_code_link(paper_title)
+            if repo_url is None:
+                repo_url = get_code_link(paper_key)
+
+        if repo_url is not None:
+            content[paper_key] = "|**{}**|**{}**|{} et.al.|[{}]({})|**[link]({})**|\n".format(
+                    update_time,paper_title,paper_first_author,paper_id,paper_url,repo_url)
+            content_to_web[paper_key] = "- {}, **{}**, {} et.al., Paper: [{}]({}), Code: **[{}]({})**".format(
+                    update_time,paper_title,paper_first_author,paper_url,paper_url,repo_url,repo_url)
+
+        else:
+            content[paper_key] = "|**{}**|**{}**|{} et.al.|[{}]({})|null|\n".format(
+                    update_time,paper_title,paper_first_author,paper_id,paper_url)
+            content_to_web[paper_key] = "- {}, **{}**, {} et.al., Paper: [{}]({})".format(
+                    update_time,paper_title,paper_first_author,paper_url,paper_url)
+
+        # TODO: select useful comments
+        comments = None
+        if comments != None:
+            content_to_web[paper_key] += f", {comments}\n"
+        else:
+            content_to_web[paper_key] += f"\n"
 
     data = {topic:content}
     data_web = {topic:content_to_web}
@@ -221,13 +227,15 @@ def update_json_file(filename,data_dict):
     with open(filename,"w") as f:
         json.dump(json_data,f)
     
-def json_to_md(filename,md_filename,
-               task = '',
-               to_web = False, 
-               use_title = True, 
-               use_tc = True,
-               show_badge = True,
-               use_b2t = True):
+def json_to_md(filename, md_filename,
+               task='',
+               to_web=False,
+               use_title=True,
+               use_tc=True,
+               show_badge=True,
+               use_b2t=True,
+               user_name=None,
+               repo_name=None):
     """
     @param filename: str
     @param md_filename: str
@@ -328,23 +336,42 @@ def json_to_md(filename,md_filename,
                 f.write(f"<p align=right>(<a href={top_info}>back to top</a>)</p>\n\n")
             
         if show_badge == True:
-            # we don't like long string, break it!
-            f.write((f"[contributors-shield]: https://img.shields.io/github/"
-                     f"contributors/Vincentqyw/cv-arxiv-daily.svg?style=for-the-badge\n"))
-            f.write((f"[contributors-url]: https://github.com/Vincentqyw/"
-                     f"cv-arxiv-daily/graphs/contributors\n"))
-            f.write((f"[forks-shield]: https://img.shields.io/github/forks/Vincentqyw/"
-                     f"cv-arxiv-daily.svg?style=for-the-badge\n"))
-            f.write((f"[forks-url]: https://github.com/Vincentqyw/"
-                     f"cv-arxiv-daily/network/members\n"))
-            f.write((f"[stars-shield]: https://img.shields.io/github/stars/Vincentqyw/"
-                     f"cv-arxiv-daily.svg?style=for-the-badge\n"))
-            f.write((f"[stars-url]: https://github.com/Vincentqyw/"
-                     f"cv-arxiv-daily/stargazers\n"))
-            f.write((f"[issues-shield]: https://img.shields.io/github/issues/Vincentqyw/"
-                     f"cv-arxiv-daily.svg?style=for-the-badge\n"))
-            f.write((f"[issues-url]: https://github.com/Vincentqyw/"
-                     f"cv-arxiv-daily/issues\n\n"))
+            if user_name is not None and repo_name is not None:
+                # we don't like long string, break it!
+                f.write((f"[contributors-shield]: https://img.shields.io/github/"
+                         f"contributors/{user_name}/{repo_name}.svg?style=for-the-badge\n"))
+                f.write((f"[contributors-url]: https://github.com/{user_name}/"
+                         f"{repo_name}/graphs/contributors\n"))
+                f.write((f"[forks-shield]: https://img.shields.io/github/forks/{user_name}/"
+                         f"{repo_name}.svg?style=for-the-badge\n"))
+                f.write((f"[forks-url]: https://github.com/{user_name}/"
+                         f"{repo_name}/network/members\n"))
+                f.write((f"[stars-shield]: https://img.shields.io/github/stars/{user_name}/"
+                         f"{repo_name}.svg?style=for-the-badge\n"))
+                f.write((f"[stars-url]: https://github.com/{user_name}/"
+                         f"{repo_name}/stargazers\n"))
+                f.write((f"[issues-shield]: https://img.shields.io/github/issues/{user_name}/"
+                         f"{repo_name}.svg?style=for-the-badge\n"))
+                f.write((f"[issues-url]: https://github.com/{user_name}/"
+                         f"{repo_name}/issues\n"))
+            else:
+                # fallback to default if not provided
+                f.write((f"[contributors-shield]: https://img.shields.io/github/"
+                         f"contributors/Vincentqyw/cv-arxiv-daily.svg?style=for-the-badge\n"))
+                f.write((f"[contributors-url]: https://github.com/Vincentqyw/"
+                         f"cv-arxiv-daily/graphs/contributors\n"))
+                f.write((f"[forks-shield]: https://img.shields.io/github/forks/Vincentqyw/"
+                         f"cv-arxiv-daily.svg?style=for-the-badge\n"))
+                f.write((f"[forks-url]: https://github.com/Vincentqyw/"
+                         f"cv-arxiv-daily/network/members\n"))
+                f.write((f"[stars-shield]: https://img.shields.io/github/stars/Vincentqyw/"
+                         f"cv-arxiv-daily.svg?style=for-the-badge\n"))
+                f.write((f"[stars-url]: https://github.com/Vincentqyw/"
+                         f"cv-arxiv-daily/stargazers\n"))
+                f.write((f"[issues-shield]: https://img.shields.io/github/issues/Vincentqyw/"
+                         f"cv-arxiv-daily.svg?style=for-the-badge\n"))
+                f.write((f"[issues-url]: https://github.com/Vincentqyw/"
+                         f"cv-arxiv-daily/issues\n"))
                 
     logging.info(f"{task} finished")        
 
@@ -384,8 +411,9 @@ def demo(**config):
             # update json data
             update_json_file(json_file,data_collector)
         # json data to markdown
-        json_to_md(json_file,md_file, task ='Update Readme', \
-            show_badge = show_badge)
+        json_to_md(json_file, md_file, task='Update Readme',
+                   to_web=False, show_badge=show_badge,
+                   user_name=config['user_name'], repo_name=config['repo_name'])
 
     # 2. update docs/index.md file (to gitpage)
     if publish_gitpage:
@@ -396,9 +424,10 @@ def demo(**config):
             update_paper_links(json_file)
         else:    
             update_json_file(json_file,data_collector)
-        json_to_md(json_file, md_file, task ='Update GitPage', \
-            to_web = True, show_badge = show_badge, \
-            use_tc=False, use_b2t=False)
+        json_to_md(json_file, md_file, task='Update GitPage',
+                   to_web=True, show_badge=show_badge,
+                   use_tc=False, use_b2t=False,
+                   user_name=config['user_name'], repo_name=config['repo_name'])
 
     # 3. Update docs/wechat.md file
     if publish_wechat:
@@ -409,8 +438,9 @@ def demo(**config):
             update_paper_links(json_file)
         else:    
             update_json_file(json_file, data_collector_web)
-        json_to_md(json_file, md_file, task ='Update Wechat', \
-            to_web=False, use_title= False, show_badge = show_badge)
+        json_to_md(json_file, md_file, task='Update Wechat',
+                   to_web=False, use_title=False, show_badge=show_badge,
+                   user_name=config['user_name'], repo_name=config['repo_name'])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
